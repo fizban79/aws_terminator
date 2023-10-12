@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+
+import sys
+import getopt
+import logging
+import terminator as t800
+
+def main(argv):
+    "Main terminator routine"
+    PROCESS_FLAG = False
+    DRY_RUN_FLAG = True
+    include = ""
+    exclude = ""
+    services = t800.get_drivers()
+    process = {}
+
+    # Process command-line arguments
+    for service in services:
+        process[service] = False
+    options = ["help", "dry-run", "delete", "all", "include=", "exclude="] + services
+    try:
+        opts, args = getopt.getopt(argv, "hi:x:", options)
+    except getopt.GetoptError:
+        print_help(services)
+        sys.exit(2)
+
+    if not opts:
+        print_help(services)
+        sys.exit(2)
+    
+    delete_opt = False
+    dryrun_opt = False
+    for opt, arg in opts:
+        if opt in ('-h', '--help'):
+            print_help(services)
+            sys.exit()
+        elif opt in ("-i", "--include"):
+            include = arg
+        elif opt in ("-x", "--exclude"):
+            exclude = arg 
+        elif opt == "--all":
+            for service in services:
+                process[service] = True
+        elif opt == "--dry-run":
+            dryrun_opt = True
+        elif opt == "--delete":
+            delete_opt = True
+        else:
+            for service in services:
+                if opt == "--"+service:
+                    process[service] = True
+    
+    # --dry-run has higher priority than --delete
+    if dryrun_opt or delete_opt:
+        PROCESS_FLAG = True
+        if delete_opt and not dryrun_opt:
+            DRY_RUN_FLAG = False
+
+    objects_to_process = False
+    objects = {}
+    resources = {}
+    
+    # Initialize enabled services objects
+    for service in services: 
+        if process[service]:
+            objects[service] = t800.terminator(service, include, exclude)
+            resources[service] = objects[service].prepare()
+            if objects[service].has_resources():
+                objects_to_process  = True
+    
+    # Sort services list according to driver priority
+    services = sorted(services, key=lambda x: (objects[x].priority if process[x] else 0))
+
+    # Prepare resources lists
+    if objects_to_process:
+        print("---Resources to process---")
+        for service in services:
+            if process[service]:
+                objects[service].print_prepare_message()
+    else:
+        print("No resources found!")
+        sys.exit(2)
+    
+    # Fail if no confirmation received
+    if objects_to_process and not DRY_RUN_FLAG:
+        if not get_confirmation():
+            print("Operation not confirmed!")
+            sys.exit(1)
+
+    # Process resources
+    report = {}
+    if PROCESS_FLAG:
+        for service in services:
+            if process[service] and len(objects[service].resources) > 0:
+                report[service] = objects[service].process(DRY_RUN_FLAG)
+    else:
+        print('\nNo resources will be processed, exiting')
+        sys.exit()
+
+    # Print report
+    print('')
+    print("---Terminator report---")
+    for service in report.keys():
+        objects[service].print_report()
+
+def print_help(services = []):
+    "Print help message"
+
+    print("Usage: %s [OPTIONS...] [RESOURCE_TYPES...]" % __file__)
+    print("\nAvailable options:")
+    print("  -h, --help                 Print this help message")
+    print("  -i, --include <text>       Include resources with <text> substring in name")
+    print("  -x, --exclude <text>       Exclude resources with <text> substring in name")
+    print("  --dry-run                  Emulate resources deletion without actual removal")
+    print("  --delete                   Actually delete the resources. Requires confirmation if any resources deleted")
+
+    if len(services) > 0:
+        print("\nAvailable resource types:")
+        print("  --all                      Process all available resource types")
+        for service in services:
+            print(t800.help_message(service))
+
+def get_confirmation():
+    "Ask user to confirm operation"
+
+    confirm = input("Please confirm the operation (type 'confirm'): ") 
+    if confirm == "confirm":
+        return True
+    else:
+        return False
+
+if __name__ == "__main__":
+   main(sys.argv[1:])
+
